@@ -9,11 +9,15 @@ import { Log } from './../log';
 export class Database implements DatabaseDriver {
     /**
      * Database driver.
+     *
+     * @type {DatabaseDriver}
      */
     private driver: DatabaseDriver;
 
     /**
      * Create a new database instance.
+     *
+     * @param  {any} options
      */
     constructor(private options: any) {
         if (options.database == 'redis') {
@@ -27,6 +31,8 @@ export class Database implements DatabaseDriver {
 
     /**
      * Get a value from the database.
+     *
+     * @return {Promise<any>}
      */
     get(key: string): Promise<any> {
         return this.driver.get(key)
@@ -34,6 +40,8 @@ export class Database implements DatabaseDriver {
 
     /**
      * Set a value to the database.
+     *
+     * @return {Promise<any>}
      */
     set(key: string, value: any): void {
         this.driver.set(key, value);

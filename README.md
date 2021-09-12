@@ -18,7 +18,9 @@ official docs: <https://laravel.com/docs/master/broadcasting>
 Install npm package globally with the following command:
 
 ``` shell
+
 $   npm install -g laravel-echo-server
+
 ```
 
 ### Initialize with CLI Tool
@@ -33,7 +35,7 @@ The cli tool will help you setup a **laravel-echo-server.json** file in the root
 
 #### API Clients
 
-The Laravel Echo Server exposes a light http API to perform broadcasting functionality. For security purposes, access to these endpoints from http referrers must be authenticated with an APP id and key. This can be generated using the cli command:
+The Laravel Echo Server exposes a light http API to perform broadcasting functionality. For security purposes, access to these endpoints from http referrers must be authenticated with an API id and key. This can be generated using the cli command:
 
 ``` shell
 $ laravel-echo-server client:add APP_ID
@@ -92,6 +94,8 @@ Edit the default configuration of the server by adding options to your **laravel
 | `sslCertChainPath` | `''`                 | The path to your server's ssl certificate chain |
 | `sslPassphrase`    | `''`                 | The pass phrase to use for the certificate (if applicable) |
 | `socketio`         | `{}`                 | Options to pass to the socket.io instance ([available options](https://github.com/socketio/engine.io#methods-1)) |
+| `apiOriginAllow`   | `{}`                 | Configuration to allow API be accessed over CORS. [Example](#cross-domain-access-to-api) |
+| `hookEndpoint`         | `null`               | The route that receives to the client-side event [Example](#hook-client-side-event)  |
 | `subscribers`      | `{"http": true, "redis": true}` | Allows to disable subscribers individually. Available subscribers: `http` and `redis` |
 
 ### DotEnv
@@ -102,14 +106,6 @@ file, the following options can be overridden:
 - `host`: `LARAVEL_ECHO_SERVER_HOST`
 - `port`: `LARAVEL_ECHO_SERVER_PORT`
 - `devMode`: `LARAVEL_ECHO_SERVER_DEBUG`
-- `databaseConfig.redis.host`: `LARAVEL_ECHO_SERVER_REDIS_HOST`
-- `databaseConfig.redis.port`: `LARAVEL_ECHO_SERVER_REDIS_PORT`
-- `databaseConfig.redis.password`: `LARAVEL_ECHO_SERVER_REDIS_PASSWORD`
-- `protocol`: `LARAVEL_ECHO_SERVER_PROTO`
-- `sslKeyPath`: `LARAVEL_ECHO_SERVER_SSL_KEY`
-- `sslCertPath`: `LARAVEL_ECHO_SERVER_SSL_CERT`
-- `sslPassphrase`: `LARAVEL_ECHO_SERVER_SSL_PASS`
-- `sslCertChainPath`: `LARAVEL_ECHO_SERVER_SSL_CHAIN`
 
 
 ### Running with SSL
@@ -131,17 +127,6 @@ location /socket.io {
 	    proxy_set_header Upgrade $http_upgrade;
 	    proxy_set_header Connection "Upgrade";
 	}
-```
-
-#### Sample Apache proxy config
-
-```
-RewriteCond %{REQUEST_URI}  ^/socket.io            [NC]
-RewriteCond %{QUERY_STRING} transport=websocket    [NC]
-RewriteRule /(.*)           ws://localhost:6001/$1 [P,L]
-
-ProxyPass        /socket.io http://localhost:6001/socket.io
-ProxyPassReverse /socket.io http://localhost:6001/socket.io
 ```
 
 ### Setting the working directory
@@ -266,8 +251,7 @@ For example, if you wanted to pass a custom configuration to Redis:
   "databaseConfig" : {
     "redis" : {
       "port": "3001",
-      "host": "redis.app.dev",
-      "keyPrefix": "my-redis-prefix"
+      "host": "redis.app.dev"
     }
   }
 }
@@ -277,35 +261,8 @@ For example, if you wanted to pass a custom configuration to Redis:
 
 *A full list of Redis options can be found [here](https://github.com/luin/ioredis/blob/master/API.md#new-redisport-host-options).*
 
-### Redis sentinel
-For example, if you wanted to use redis-sentinel, you need to pass a custom configuration : 
-
-``` json
- "databaseConfig": {
-     "redis": {
-       "sentinels": [
-         {
-           "host": "redis-sentinel-0",
-           "port": 26379
-         },
-         {
-            "host": "redis-sentinel-1",
-            "port": 26379
-         }
-         {
-           "host": "redis-sentinel-2",
-           "port": 26379
-         }
-       ],
-       "name": "mymaster",
-       "sentinelPassword": "redis-password"
-     },
-   },
- ``` 
-*For more information about redis sentinel configuration you can check [this](https://github.com/luin/ioredis#sentinel)*
 ### SQLite
-
-With SQLite you may be interested in changing the path where the database is stored.
+With SQLite you may be interested in changing the path where the database is stored:
 
 ``` json
 {
@@ -317,9 +274,7 @@ With SQLite you may be interested in changing the path where the database is sto
 }
 ```
 
-***Note 1:*** The path is relative to the root of your application, not your system.
-
-***Note 2:*** [node-sqlite3](https://github.com/mapbox/node-sqlite3) is required for this database. Please install before using.
+***Note: [node-sqlite3](https://github.com/mapbox/node-sqlite3) is required for this database. Please install before using.***
 
 ```
 npm install sqlite3 -g
@@ -368,6 +323,129 @@ add a script tag to your html like so:
 
 _Note: When using the socket.io client library from your running server, remember to check that the `io` global variable is defined before subscribing to events._
 
-#### µWebSockets deprecation
+#### Better performance with [µWebSockets](https://github.com/uWebSockets/uWebSockets)
+For extra performance, you can use the faster `uws` engine instead of `ws`, by setting the `wsEngine` option for Socket.IO in `laravel-echo-server.json`:
 
-µWebSockets has been [officially deprecated](https://www.npmjs.com/package/uws). Currently there is no support for µWebSockets in Socket.IO, but it may have the new [ClusterWS](https://www.npmjs.com/package/@clusterws/cws) support incoming. Meanwhile Laravel Echo Server will use [`ws` engine](https://www.npmjs.com/package/ws) by default until there is another option.
+```js
+"socketio": {
+    "wsEngine": "uws"
+}
+```
+
+See <https://github.com/uWebSockets/uWebSockets> for more information.
+
+## Hook client side event
+There are 3 types of client-side event can be listen to. Here is the event names:
+- join
+- leave
+- client_event
+
+### Hooks configuration
+First, you need to configurate your `hookEndpoint`. Here is an example:
+
+```ini
+"hookHost": "/api/hook",
+```
+
+You don't need to configure hook host. hook host value is getting from `authHost`
+
+`laravel-echo-server` will send a post request to hook endpoint when there is a client-side event coming.
+You can get event information from `cookie` and `form`.
+
+#### Get data from cookie
+`laravel-echo-server` directly use `cookie` from page. So you can add some cookie values like `user_id` to identify user.
+
+#### Get data from post form
+There is always an attribute in post form called `channel`. You can get event payload of [Client Event](https://laravel.com/docs/5.7/broadcasting#client-events) of there is an client event, such as `whisper`.
+
+**Post form format**
+
+| Attribute           | Description             | Example             | Default               |
+| :-------------------| :---------------------- | :-------------------| :---------------------|
+| `event`             | The event name. Options: `join`, `leave`, `client_event`          | `join`              |                       |
+| `channel`           | The channel name        | `meeting`           |                      |
+| `payload`           | Payload of client event. `joinChannel` or `leaveChannel` hook doesn't have payload | `{from: 'Alex', to: 'Bill'}` | `null`       |
+
+### join channel hook
+When users join in a channel `event` should be `join`.
+
+The request form example:
+```ini
+event = join
+channel = helloworld
+```
+
+Route configuration example:
+```php
+Route::post('/hook', function(Request $request) {
+  if ($request->input('event') === 'join') {
+    $channel = $request->input('channel');
+    $x_csrf_token = $request->header('X-CSRF-TOKEN');
+    $cookie = $request->header('Cookie');
+    // ... 
+  }
+});
+```
+
+### leave channel hook
+When users leave a channel `event` should be `leave`.
+
+> Notes that there is no X-CSRF-TOKEN in header when sending a post request for leave channel event, so you'd better not to use the route in `/routes/web.php`.
+
+The request form example:
+```ini
+event = leave
+channel = helloworld
+```
+
+Route configuration example:
+```php
+use Illuminate\Http\Request;
+
+Route::post('/hook', function(Request $request) {
+  if ($request->input('event') === 'leave') {
+    $channel = $request->input('channel');
+    $cookie = $request->header('Cookie');
+    // ...
+  }
+});
+```
+
+### client event hook
+When users use `whisper` to broadcast an event in a channel `event` should be `client_event`. 
+
+> Notes that there is no X-CSRF-TOKEN in header when sending a post request for client-event event, so you'd better not to use the route in `/routes/web.php`.
+
+It will fire the client-event after using `whisper` to broadcast an event like this:
+```javascript
+Echo.private('chat')
+    .whisper('whisperEvent', {
+        from: this.username,
+        to: this.whisperTo
+    });
+```
+
+The request form example
+```ini
+event = client_event
+channel = helloworld
+payload = {from:'Alex', to:'Bill'}
+```
+
+Route configuration example
+```php
+use Illuminate\Http\Request;
+
+Route::post('/hoot', function(Request $request) {
+  if ($request->input('event') === 'client_event') {
+    $channel = $request->input('channel');
+    $user_id = $request->header('Cookie');
+    $payload = $request->input('payload');
+    $from = $payload['from'];
+    $to = $payload['to'];
+    // ...
+  }
+});
+```
+
+> Notes that even though we use an `Object` as payload of client event, the payload will be transformed to an `Array` in PHP. So remember to get your attribute from payload by using an `Array` method like `$payload['xxxx']`

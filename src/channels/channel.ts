@@ -1,3 +1,4 @@
+let request = require('request');
 import { PresenceChannel } from './presence-channel';
 import { PrivateChannel } from './private-channel';
 import { Log } from './../log';
@@ -5,23 +6,38 @@ import { Log } from './../log';
 export class Channel {
     /**
      * Channels and patters for private channels.
+     *
+     * @type {array}
      */
     protected _privateChannels: string[] = ['private-*', 'presence-*'];
 
     /**
      * Allowed client events
+     *
+     * @type {array}
      */
     protected _clientEvents: string[] = ['client-*'];
 
     /**
      * Private channel instance.
+     *
+     * @type {PrivateChannel}
      */
     private: PrivateChannel;
 
     /**
      * Presence channel instance.
+     *
+     * @type {PresenceChannel}
      */
     presence: PresenceChannel;
+
+    /**
+     * Request client.
+     *
+     * @type {any}
+     */
+    private request: any;
 
     /**
      * Create a new channel instance.
@@ -29,6 +45,7 @@ export class Channel {
     constructor(private io, private options) {
         this.private = new PrivateChannel(options);
         this.presence = new PresenceChannel(io, options);
+        this.request = request;
 
         if (this.options.devMode) {
             Log.success('Channels are ready.');
@@ -44,21 +61,19 @@ export class Channel {
                 this.joinPrivate(socket, data);
             } else {
                 socket.join(data.channel);
-                this.onJoin(socket, data.channel);
+                this.onJoin(socket, data.channel, data.auth);
             }
         }
     }
 
     /**
      * Trigger a client message
+     *
+     * @param  {object} socket
+     * @param  {object} data
+     * @return {void}
      */
     clientEvent(socket, data): void {
-        try {
-            data = JSON.parse(data);
-        } catch (e) {
-            data = data;
-        }
-
         if (data.event && data.channel) {
             if (this.isClientEvent(data.event) &&
                 this.isPrivate(data.channel) &&
@@ -66,14 +81,21 @@ export class Channel {
                 this.io.sockets.connected[socket.id]
                     .broadcast.to(data.channel)
                     .emit(data.event, data.channel, data.data);
+                this.hook(socket, data.channel, data.auth, "client_event", data.data);
             }
         }
     }
 
     /**
      * Leave a channel.
+     *
+     * @param  {object} socket
+     * @param  {string} channel
+     * @param  {string} reason
+     * @param  {object} auth
+     * @return {void}
      */
-    leave(socket: any, channel: string, reason: string): void {
+    leave(socket: any, channel: string, reason: string, auth: any): void {
         if (channel) {
             if (this.isPresence(channel)) {
                 this.presence.leave(socket, channel)
@@ -84,11 +106,16 @@ export class Channel {
             if (this.options.devMode) {
                 Log.info(`[${new Date().toISOString()}] - ${socket.id} left channel: ${channel} (${reason})`);
             }
+
+            this.hook(socket, channel, auth, "leave", null);
         }
     }
 
     /**
      * Check if the incoming socket connection is a private channel.
+     *
+     * @param  {string} channel
+     * @return {boolean}
      */
     isPrivate(channel: string): boolean {
         let isPrivate = false;
@@ -117,7 +144,7 @@ export class Channel {
                 this.presence.join(socket, data.channel, member);
             }
 
-            this.onJoin(socket, data.channel);
+            this.onJoin(socket, data.channel, data.auth);
         }, error => {
             if (this.options.devMode) {
                 Log.error(error.reason);
@@ -130,6 +157,9 @@ export class Channel {
 
     /**
      * Check if a channel is a presence channel.
+     *
+     * @param  {string} channel
+     * @return {boolean}
      */
     isPresence(channel: string): boolean {
         return channel.lastIndexOf('presence-', 0) === 0;
@@ -137,15 +167,24 @@ export class Channel {
 
     /**
      * On join a channel log success.
+     *
+     * @param {any} socket
+     * @param {string} channel
+     * @param {any} auth
      */
-    onJoin(socket: any, channel: string): void {
+    onJoin(socket: any, channel: string, auth: any): void {
         if (this.options.devMode) {
             Log.info(`[${new Date().toISOString()}] - ${socket.id} joined channel: ${channel}`);
         }
+
+        this.hook(socket, channel, auth, "join", null);
     }
 
     /**
      * Check if client is a client event
+     *
+     * @param  {string} event
+     * @return {boolean}
      */
     isClientEvent(event: string): boolean {
         let isClientEvent = false;
@@ -160,8 +199,77 @@ export class Channel {
 
     /**
      * Check if a socket has joined a channel.
+     *
+     * @param socket
+     * @param channel
+     * @returns {boolean}
      */
     isInChannel(socket: any, channel: string): boolean {
         return !!socket.rooms[channel];
+    }
+
+    /**
+     * 
+     * @param {any} socket 
+     * @param {string} channel
+     * @param {object} auth 
+     * @param {string} event 
+     * @param {object} payload
+     */
+    hook(socket:any, channel: any, auth: any, event: string, payload: object) {
+        if (typeof this.options.hookEndpoint == 'undefined' ||
+            !this.options.hookEndpoint) {
+            return;
+        }
+
+        let hookEndpoint = this.options.hookEndpoint;
+
+        let options = this.prepareHookHeaders(socket, auth, channel, hookEndpoint, event, payload)
+
+        this.request.post(options, (error, response, body, next) => {
+            if (error) {
+                if (this.options.devMode) {
+                    Log.error(`[${new Date().toISOString()}] - Error call ${event} hook ${socket.id} for ${options.form.channel_name}`);
+                }
+
+                Log.error(error);
+            } else if (response.statusCode !== 200) {
+                if (this.options.devMode) {
+                    Log.warning(`[${new Date().toISOString()}] - Error call ${event} hook ${socket.id} for ${options.form.channel_name}`);
+                    Log.error(response.body);
+                }
+            } else {
+                if (this.options.devMode) {
+                    Log.info(`[${new Date().toISOString()}] - Call ${event} hook for ${socket.id} for ${options.form.channel_name}: ${response.body}`);
+                }
+            }
+        });
+    }
+
+    /**
+     * Prepare headers for request to app server.
+     * 
+     * @param {any} socket
+     * @param {any} auth
+     * @param {string} channel
+     * @param {string} hookEndpoint
+     * @param {string} event
+     * @param {any} payload
+     * @returns {any}
+     */
+    prepareHookHeaders(socket: any, auth: any, channel: string, hookEndpoint: string, event: string, payload: any): any {
+        let hookHost = this.options.hookHost ? this.options.hookHost : this.options.authHost
+        let options = {
+            url: hookHost + hookEndpoint,
+            form: { 
+                event: event,
+                channel: channel, 
+                payload: payload 
+            },
+            headers: (auth && auth.headers) ? auth.headers : {}
+        };
+        options.headers['Cookie'] = socket.request.headers.cookie;
+        options.headers['X-Requested-With'] = 'XMLHttpRequest';
+        return options;
     }
 }
